@@ -52,18 +52,38 @@ Return results as structured tool_result events:
 
 ---
 
+## Model Routing Rules
+
+> **Aligned with opencode-config**: `github.com/niq-cnr/opencode-config`
+
+### Default orchestration model (planning, validation, architecture):
+- `zai-coding-plan/glm-5.2` — reasoningEffort: max, temperature: 0.3
+
+### Coding/implementation model (via Kimi Code CLI for Agent Swarm):
+- `kimi-for-coding/k2p7` — reasoningEffort: max, temperature: 0.1
+- **CRITICAL**: This model MUST be routed through the Kimi Code CLI
+  subprocess mechanism to access Agent Swarm. Direct Z.ai API access
+  gives a plain LLM with NO swarm capabilities.
+
+### Lightweight/fast model:
+- `zai-coding-plan/glm-5-turbo` — for quick edits and lookups
+
+### Model switching:
+```
+/model zai-coding-plan/glm-5.2       # Planning, architecture, validation
+/model kimi-for-coding/k2p7          # Implementation (requires Kimi CLI)
+/model zai-coding-plan/glm-5-turbo   # Quick tasks
+```
+
+---
+
 ## Kimi Agent Swarm Delegation Rules
 
-> **PREREQUISITE CHECK**: These rules ONLY apply when Pi is connected to Kimi
-> via the **Kimi Code CLI subprocess** (`kimi --rpc`) or **ACP protocol** — NOT
-> when using the Direct Model API (`api.moonshot.ai/v1`).
+> **PREREQUISITE**: These rules ONLY apply when `kimi-for-coding/k2p7` is
+> routed through the **Kimi Code CLI subprocess** — NOT via direct Z.ai API.
 >
-> If connected via Direct API: Agent Swarm commands (`/swarm`, `/goal`,
-> `use explore`) are UNAVAILABLE. Use standard single-agent coding with
-> pi-subagents for limited parallelism (max 4 agents).
->
-> If connected via CLI/ACP: All commands below are available. The Kimi Code
-> CLI application layer provides the Agent Swarm implementation.
+> When using direct API: Agent Swarm is UNAVAILABLE. Use standard single-agent
+> coding with pi-subagents for limited parallelism (max 4 agents).
 
 ### When to use Kimi's native multi-agent capabilities:
 
@@ -97,7 +117,7 @@ Return results as structured tool_result events:
 - Use `/goal next [objective]` to queue follow-up work after current goal
 - Use `/goal manage` to track progress on long-running goals
 - Monitor token budgets — set `default_token_budget` in `~/.kimi-code/config.toml`
-- For CI/CD: use K2.6 instant mode (not thinking mode) for reproducible outputs
+- For CI/CD: use K2.7 instant mode (not thinking mode) for reproducible outputs
 
 ### Cost awareness for Kimi swarms:
 - 3-5 agents: ~50-100K tokens, ~$0.03-0.06
