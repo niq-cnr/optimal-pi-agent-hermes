@@ -54,9 +54,16 @@ Return results as structured tool_result events:
 
 ## Kimi Agent Swarm Delegation Rules
 
-> **ONLY APPLIES WHEN USING KIMI MODEL (K2.5 or K2.6).**
-> When the underlying model is Kimi, leverage its native Agent Swarm capabilities
-> instead of handling everything in a single turn or using pi-subagents.
+> **PREREQUISITE CHECK**: These rules ONLY apply when Pi is connected to Kimi
+> via the **Kimi Code CLI subprocess** (`kimi --rpc`) or **ACP protocol** — NOT
+> when using the Direct Model API (`api.moonshot.ai/v1`).
+>
+> If connected via Direct API: Agent Swarm commands (`/swarm`, `/goal`,
+> `use explore`) are UNAVAILABLE. Use standard single-agent coding with
+> pi-subagents for limited parallelism (max 4 agents).
+>
+> If connected via CLI/ACP: All commands below are available. The Kimi Code
+> CLI application layer provides the Agent Swarm implementation.
 
 ### When to use Kimi's native multi-agent capabilities:
 
@@ -79,22 +86,18 @@ Return results as structured tool_result events:
 - Do NOT decompose tasks manually into step-by-step instructions — Kimi's
   PARL-trained orchestrator outperforms manual decomposition for parallel work
 - Do NOT request sub-agents for simple tasks (<5 files, single concern)
-- Do NOT attempt nested sub-agent delegation — Kimi blocks this at the model
-  level to prevent exponential token consumption
-- Do NOT use `pi-subagents` `delegate` commands when Kimi is the model;
-  this creates a redundant orchestration layer that wastes tokens and prevents
-  Kimi's native swarm from activating
+- Do NOT attempt nested sub-agent delegation — Kimi blocks this at the
+  orchestrator level to prevent exponential token consumption
+- Do NOT use `pi-subagents` `delegate` commands when Kimi CLI swarm is
+  active; this creates a redundant orchestration layer
 
 ### What TO do with Kimi:
 - Write clear, high-level task descriptions with success criteria — Kimi
   decomposes better with abstract goals than step-by-step instructions
 - Use `/goal next [objective]` to queue follow-up work after current goal
 - Use `/goal manage` to track progress on long-running goals
-- Monitor token budgets — large swarms (50+ agents) can consume 1M+ tokens;
-  set `default_token_budget` in `~/.kimi-code/config.toml`
-- For CI/CD automation: use K2.6 instant mode (not thinking mode) to ensure
-  reproducible outputs; thinking mode has locked temperature and mandatory
-  reasoning that varies between runs
+- Monitor token budgets — set `default_token_budget` in `~/.kimi-code/config.toml`
+- For CI/CD: use K2.6 instant mode (not thinking mode) for reproducible outputs
 
 ### Cost awareness for Kimi swarms:
 - 3-5 agents: ~50-100K tokens, ~$0.03-0.06
@@ -102,5 +105,4 @@ Return results as structured tool_result events:
 - 50-100 agents: ~1-2M tokens, ~$0.60-1.20
 - 100-300 agents: ~3-8M tokens, ~$1.80-4.80
 
-Always prefer the smallest swarm that accomplishes the task. Kimi's
-orchestrator auto-dispatches the minimum necessary sub-agents.
+Always prefer the smallest swarm that accomplishes the task.
