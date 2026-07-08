@@ -1,0 +1,81 @@
+# =============================================================================
+# Hermes Configuration for Pi Agent Delegation
+# =============================================================================
+# Place this file at: ~/.hermes/config.yaml
+# =============================================================================
+
+agent:
+  name: "hermes-pi-orchestrator"
+  model: "claude:claude-sonnet-4.5"
+  max_concurrent_children: 3
+  max_spawn_depth: 2
+  delegation_mode: async
+  max_turns_per_session: 50
+  context_compression_threshold: 0.8
+
+pi_agent:
+  transport: rpc
+  default_model: "claude:claude-sonnet-4.5"
+  sandbox:
+    enabled: true
+    type: docker
+    workspace_mount: "${PWD}:/workspace"
+    resources: medium
+  extensions:
+    - pi-container-sandbox
+    - pi-subagents
+  session_dir: "~/.hermes/pi-sessions"
+  model_routing:
+    simple_edits: "ollama:codellama:13b"
+    standard_coding: "openai:gpt-4.1-mini"
+    complex_architecture: "claude:claude-sonnet-4.5"
+    review_validation: "openai:gpt-4.1"
+
+kanban:
+  enabled: true
+  heartbeat_interval: 300
+  stale_timeout: 14400
+  claim_ttl: 900
+  auto_retry: true
+  max_retries: 3
+
+memory:
+  prompt_memory:
+    memory_file: "~/.hermes/MEMORY.md"
+    user_file: "~/.hermes/USER.md"
+    max_chars: 2200
+  session_archive:
+    backend: sqlite
+    fts5_enabled: true
+  skills:
+    auto_generate: true
+    trigger_threshold: 5
+    curator_enabled: true
+    curator_cycle: 7
+  external_providers: []
+
+mcp:
+  servers: []
+
+logging:
+  level: info
+  format: json
+  output: "~/.hermes/logs/hermes.log"
+
+metrics:
+  enabled: true
+  export_interval: 60
+
+security:
+  terminal_backend: docker
+  dangerous_commands:
+    require_approval: true
+    allowed_in_containers: false
+  profile_isolation: true
+  skill_scanning:
+    enabled: true
+    trust_levels:
+      - builtin
+      - official
+      - trusted
+      - community
