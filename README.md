@@ -1,6 +1,6 @@
 # Optimal Pi Agent Configuration for Hermes Delegation
 
-> **Version**: 1.2.0  
+> **Version**: 1.3.0  
 > **Last Updated**: July 2026  
 > **Compatibility**: Hermes >= v0.8.0, Pi >= v0.5.0, Kimi Code CLI >= v0.23.1  
 
@@ -39,9 +39,10 @@ pi ext install pi-container-sandbox
 pi ext install pi-subagents
 
 # 3. Launch Pi in RPC mode with container sandbox
+#    Using GLM-5.2 for orchestration (aligned with opencode-config)
 pi \
   --mode rpc \
-  --model claude:claude-sonnet-4.5 \
+  --model zai-coding-plan/glm-5.2 \
   --ext pi-container-sandbox \
   --sandbox-type docker \
   --workspace-mount $(pwd):/workspace \
@@ -93,7 +94,7 @@ The recommended architecture follows the **"Orchestration Sandwich"** pattern va
 **Use RPC mode** for all Hermes integrations. No exceptions.
 
 ```bash
-pi --mode rpc --model claude:claude-sonnet-4.5
+pi --mode rpc --model zai-coding-plan/glm-5.2
 ```
 
 Pi's RPC mode operates as newline-delimited JSON over stdin/stdout. The process emits a `{"type":"ready"}` frame at startup before accepting commands.
@@ -151,7 +152,7 @@ pi ext install pi-container-sandbox
 # Launch with per-session Docker isolation
 pi \
   --mode rpc \
-  --model claude:claude-sonnet-4.5 \
+  --model zai-coding-plan/glm-5.2 \
   --ext pi-container-sandbox \
   --sandbox-type docker \
   --workspace-mount /path/to/project:/workspace \
@@ -208,7 +209,7 @@ You receive tasks via RPC and return structured results.
 - Escalate ambiguous requirements to supervisor
 
 ## Testing
-- Run `npm test` after JavaScript changes
+- Run `npm test` after JavaScript/Changes
 - Run `pytest` after Python changes
 - All changes must pass existing tests before reporting done
 
@@ -287,33 +288,77 @@ Research from Google/MIT (180 configurations tested) shows:
 
 ## 6. Model Routing
 
-Pi supports 15+ providers. Configure cost-optimal routing:
+This model routing table is **aligned with the opencode-config reference** (`github.com/niq-cnr/opencode-config`). All model identifiers use the Z.ai platform namespace.
 
-### Provider Selection
+### Primary Model Stack
 
-| Task Type | Provider | Cost | Quality |
-|-----------|----------|------|---------|
-| Simple edits/refactoring | `ollama:codellama:13b` | Near-zero | Adequate |
-| Standard coding | `openai:gpt-4.1-mini` | Low | Good |
-| Complex architecture | `claude:claude-sonnet-4.5` | Medium | **Highest** |
-| Review/validation | Different model from author | Varies | Catches blind spots |
+| Role | Model Identifier | reasoningEffort | Temperature | Max Tokens | Source |
+|------|-----------------|-----------------|-------------|------------|--------|
+| **Orchestrator** | `zai-coding-plan/glm-5.2` | `max` | 0.3 | 64,000 | Z.ai / GLM |
+| **Planner** | `zai-coding-plan/glm-5.2` | `max` | 0.3 | 128,000 | Z.ai / GLM |
+| **Generator** | `kimi-for-coding/k2p7` | `max` | 0.1 | 128,000 | Z.ai / Kimi |
+| **Validator** | `zai-coding-plan/glm-5.2` | `xhigh` | 0.1 | 64,000 | Z.ai / GLM |
+| **Evaluator** | `kimi-for-coding/k2p7` | `xhigh` | 0.1 | 128,000 | Z.ai / Kimi |
+| **Small/Fast** | `zai-coding-plan/glm-5-turbo` | — | — | — | Z.ai / GLM |
 
-### Mid-Session Switching
+### Model Selection Rationale
 
-```bash
-/model openai:gpt-4.1-mini      # Switch to cheap model
-/model claude:claude-sonnet-4.5  # Switch to quality model
-Ctrl+P                            # Cycle favorite models
+**GLM-5.2** (`zai-coding-plan/glm-5.2`) for orchestration, planning, and validation:
+- Superior long-context reasoning (up to 128K tokens)
+- High reasoning effort (`max`/`xhigh`) produces structured, deterministic output
+- Lower temperature (0.1-0.3) for consistent, reproducible decisions
+- Ideal for architecture, specification, and verification tasks
+
+**Kimi K2.7** (`kimi-for-coding/k2p7`) for generation and evaluation:
+- Access to **Agent Swarm** when routed through Kimi Code CLI (see Section 11)
+- Up to 4,000 tool calls per task, 300 parallel sub-agents, 4.5x speedup
+- Low temperature (0.1) for deterministic code generation
+- Best-in-class for implementation and QA verification
+
+**GLM-5-Turbo** (`zai-coding-plan/glm-5-turbo`) for lightweight tasks:
+- Fast, cost-effective for simple edits and quick lookups
+- Used as the `small_model` fallback
+
+### CRITICAL: Kimi Model Requires CLI Delegation
+
+When Pi uses `kimi-for-coding/k2p7`, it **must** be routed through the **Kimi Code CLI subprocess** mechanism to access Agent Swarm. Using the direct Z.ai API endpoint for this model identifier gives you a powerful LLM but **no Agent Swarm**.
+
+**Correct flow for Kimi-coded tasks**:
+```
+Pi (RPC) → set_model: kimi-for-coding/k2p7
+         → spawn Kimi Code CLI subprocess (kimi --rpc)
+         → Kimi CLI routes to Z.ai platform
+         → Agent Swarm orchestration enabled
+         → 300 sub-agents, 4.5x speedup available
 ```
 
-### Cost Comparison (per task)
+**Incorrect flow** (no Agent Swarm):
+```
+Pi (RPC) → set_model: kimi-for-coding/k2p7
+         → Direct HTTP API call to Z.ai
+         → Plain LLM response only
+         → NO swarm, NO sub-agents, NO 4.5x speedup
+```
 
-| Agent | Cost/Task | Token Efficiency |
-|-------|-----------|-----------------|
-| **Pi (with routing)** | **~$0.10-0.50** | **Optimal** |
-| Opencode | ~$1.03 | Good |
-| Claude Code | ~$1.83 | Lower |
-| Cursor | ~$27.90 | Lowest |
+See Section 11 for full integration mechanism details.
+
+### Mid-Session Model Switching
+
+```bash
+/model zai-coding-plan/glm-5.2       # Switch to GLM for planning
+/model zai-coding-plan/glm-5-turbo   # Switch to turbo for quick tasks
+/model kimi-for-coding/k2p7          # Switch to Kimi for coding (requires CLI)
+Ctrl+P                                # Cycle favorite models
+```
+
+### Cost Comparison (per task, Z.ai platform)
+
+| Role | Model | Est. Cost/Task | Efficiency |
+|------|-------|----------------|------------|
+| Orchestration | `zai-coding-plan/glm-5.2` | ~$0.05-0.15 | High |
+| Implementation | `kimi-for-coding/k2p7` | ~$0.10-0.50 | High |
+| Validation | `zai-coding-plan/glm-5.2` | ~$0.03-0.10 | High |
+| Quick tasks | `zai-coding-plan/glm-5-turbo` | ~$0.01-0.03 | **Optimal** |
 
 ---
 
@@ -357,7 +402,7 @@ auto_retry: true
 
 ```bash
 # For CI/CD pipelines where Hermes delegates one-shot tasks
-pi --mode print --format json --model openai:gpt-4.1-mini \
+pi --mode print --format json --model zai-coding-plan/glm-5-turbo \
    "Run tests and report failures"
 ```
 
@@ -425,12 +470,13 @@ See [`AGENTS.md`](AGENTS.md)
 | Delegating sequential tasks in parallel | -39% to -70% performance degradation | Keep sequential work single-agent |
 | Tasks under 5 minutes | Delegation overhead exceeds speedup | Handle inline, don't delegate |
 | More than 4 subagents | Coordination costs dominate | Cap at 3-4 agents |
+| Using `kimi-for-coding/k2p7` via direct API expecting Agent Swarm | Direct API gives plain LLM only; no server-side orchestration | Route through Kimi Code CLI subprocess (Section 11) |
 
 ---
 
 ## 11. CRITICAL: Kimi Agent Swarm — Integration Mechanisms
 
-> **The most important fact about Kimi Agent Swarm**: It is a **server-side orchestration service**, not a base model capability. Simply setting Pi's model to `kimi-k2.6` via the standard OpenAI-compatible API (`api.moonshot.ai/v1`) gives you a **plain LLM with NO Agent Swarm access**. The integration mechanism — direct API, CLI subprocess, or ACP — determines which features are available.
+> **The most important fact about Kimi Agent Swarm**: It is a **server-side orchestration service**, not a base model capability. Simply referencing `kimi-for-coding/k2p7` via the Z.ai direct API gives you a **powerful LLM with NO Agent Swarm access**. The integration mechanism — direct API vs. Kimi Code CLI subprocess — determines which features are available.
 
 ### 11.1 The Fundamental Distinction
 
@@ -440,69 +486,85 @@ Agent Swarm is **model-native orchestration** where "the coordination, routing, 
 
 ### 11.2 Three Integration Mechanisms — Feature Matrix
 
-| Mechanism | How Pi Connects | Agent Swarm | `/swarm` | `/goal` | Sub-agents | 4.5x Speedup |
-|-----------|-----------------|-------------|----------|--------|------------|-------------|
-| **A. Direct Model API** | HTTP `api.moonshot.ai/v1` | **NO** | N/A | N/A | N/A | N/A |
-| **B. Kimi Code CLI** | Subprocess `kimi --rpc` | **YES** | Yes | Yes | Yes | **YES** |
-| **C. ACP Protocol** | Connect to `kimi server` daemon | **YES** | Yes | Yes | Yes | **YES** |
+| Mechanism | How Pi Connects | `kimi-for-coding/k2p7` | Agent Swarm | `/swarm` | Sub-agents | 4.5x Speedup |
+|-----------|----------------|------------------------|-------------|----------|------------|-------------|
+| **A. Direct Z.ai API** | HTTP `api.z.ai` | Plain LLM only | **NO** | N/A | N/A | N/A |
+| **B. Kimi Code CLI** | Subprocess `kimi --rpc` | Full LLM + swarm | **YES** | Yes | Yes | **YES** |
+| **C. ACP Protocol** | Connect to `kimi server` daemon | Full LLM + swarm | **YES** | Yes | Yes | **YES** |
 
-**Mechanism A (Direct API)** is what most Pi users configure:
+**Mechanism A (Direct Z.ai API)** is the default:
 ```bash
 # This does NOT give Agent Swarm — just a plain LLM
-pi --mode rpc --model moonshot:kimi-k2.6
+pi --mode rpc --model zai:kimi-for-coding/k2p7
 ```
 
 **Mechanism B (CLI Subprocess)** is required for Agent Swarm:
 ```bash
 # This gives FULL Agent Swarm access
 pi --mode rpc --model "kimi-cli"  # Pi spawns kimi process internally
+# kimi CLI handles routing to Z.ai for the actual model
 ```
 
-### 11.3 Mechanism A: Direct Model API — What You Actually Get
+### 11.3 How `kimi-for-coding/k2p7` Maps to Agent Swarm
 
-When Pi connects to Kimi via the standard API endpoint, you get:
+The model identifier `kimi-for-coding/k2p7` (from your opencode-config) is resolved by the **Kimi Code CLI application layer**, not by Pi's direct model router. When Pi needs Kimi with Agent Swarm:
 
-- A powerful LLM (1T MoE, 32B active, 256K context)
-- Tool calling support (if configured)
-- Standard chat.completions behavior
-- **NO** automatic task decomposition
-- **NO** parallel sub-agent spawning
-- **NO** PARL-trained orchestration
-- **NO** `/swarm`, `/goal`, or sub-agent commands
-
-```python
-# What happens with Direct API (NO swarm)
-Hermes → Pi → HTTP POST api.moonshot.ai/v1/chat.completions
-              → Returns: single LLM response
-              → Pi must implement ALL orchestration manually
+```
+┌─────────────────────────────────────────────────────────────┐
+│  Pi Agent (RPC mode)                                        │
+│  └── set_model: kimi-for-coding/k2p7                        │
+│      └── BUT: routed through Kimi Code CLI, not direct API  │
+└──────────────────────┬──────────────────────────────────────┘
+                       │
+┌──────────────────────▼──────────────────────────────────────┐
+│  Kimi Code CLI Subprocess (kimi --rpc)                       │
+│  └── Reads model config: kimi-for-coding/k2p7               │
+│      └── Authenticates to Z.ai platform                     │
+│          └── model resolved to Kimi K2.7 on Moonshot infra  │
+│              └── Agent Swarm orchestration ENABLED          │
+│                  └── 300 sub-agents, 4.5x speedup          │
+└─────────────────────────────────────────────────────────────┘
 ```
 
-**When to use**: Standard coding tasks where Pi's own pi-subagents extension provides sufficient parallelism (max 4 agents). This is the default and works well for most tasks.
+**Key insight**: The same model identifier (`kimi-for-coding/k2p7`) means different things depending on which layer resolves it:
+- **Direct API layer**: Gets Kimi K2.7 base model (no swarm)
+- **Kimi CLI layer**: Gets Kimi K2.7 + full Agent Swarm orchestration
 
-### 11.4 Mechanism B: Kimi Code CLI Subprocess — Full Swarm Access
+### 11.4 Configuration: Routing `kimi-for-coding/k2p7` Through Kimi CLI
 
-Pi spawns the `kimi` CLI as a subprocess and drives it via stdin/stdout. The CLI application layer includes the full Agent Swarm implementation.
+**Step 1**: Configure Pi to use the Kimi CLI wrapper for Kimi-coded tasks:
 
-```python
-# What happens with CLI Subprocess (FULL swarm)
-Hermes → Pi → spawns `kimi --rpc` subprocess
-              → Pi sends: "/swarm analyze codebase"
-              → Kimi CLI → server-side orchestrator
-              → 300 sub-agents spawned on Moonshot infra
-              → Results aggregated → returned to Pi → Hermes
-```
-
-**Configuration**:
 ```bash
-# Hermes delegates to a Pi instance configured for Kimi CLI
-pi \
-  --mode rpc \
-  --model kimi-cli:kimi-k2.6 \  # Special model identifier for CLI mode
-  --ext pi-container-sandbox \
-  --workspace-mount $(pwd):/workspace
+# ~/.pi/config.yaml — model routing configuration
+models:
+  # GLM models — direct Z.ai API (no special handling needed)
+  glm-5.2:
+    provider: zai
+    model: zai-coding-plan/glm-5.2
+    api_key: ${Z_AI_API_KEY}
+    
+  glm-5-turbo:
+    provider: zai
+    model: zai-coding-plan/glm-5-turbo
+    api_key: ${Z_AI_API_KEY}
+  
+  # Kimi model — MUST route through Kimi Code CLI
+  kimi-k2p7:
+    provider: kimi-cli        # Special provider: spawns subprocess
+    model: kimi-for-coding/k2p7
+    cli_path: $(which kimi)   # Path to Kimi Code CLI binary
+    api_key: ${Z_AI_API_KEY}  # Z.ai auth (Kimi CLI uses this)
 ```
 
-**Inside the Pi session, Kimi CLI commands work natively**:
+**Step 2**: When Pi needs to switch to Kimi for coding tasks:
+
+```bash
+# Inside Pi RPC session
+/model kimi-k2p7              # Pi spawns Kimi CLI subprocess
+```
+
+**Step 3**: Kimi CLI commands work natively within Pi:
+
 ```bash
 /swarm "Find all security vulnerabilities in src/"
 /goal "Refactor auth module to use JWT tokens"
@@ -511,90 +573,80 @@ use explore to map out the database layer
 use plan to design the new API schema
 ```
 
-**Critical**: The `kimi` CLI process must have valid authentication (`KIMI_API_KEY` or OAuth token). Pi does NOT manage Kimi auth — it must be configured in the environment before the CLI starts.
+### 11.5 The Delegation Chain: Hermes → Pi → Kimi CLI → Agent Swarm
 
-### 11.5 Mechanism C: ACP (Agent Client Protocol) — Editor Integration
-
-ACP is Kimi's protocol for editor integration (Zed, JetBrains). Pi can connect to a running `kimi server` daemon via ACP to drive sessions.
-
-```python
-# What happens with ACP (FULL swarm)
-Hermes → Pi → ACP WebSocket to localhost:port
-              → Pi sends: workspace.open + message.send
-              → Kimi Server → server-side orchestrator
-              → Swarm executes → results via ACP → Pi → Hermes
+```
+Hermes (orchestrator)
+  └── Pi (parent agent, RPC mode)
+        ├── GLM tasks: direct API → zai-coding-plan/glm-5.2
+        │                └── Standard single-agent execution
+        │
+        └── Kimi tasks: spawn kimi --rpc subprocess
+                         ├── model: kimi-for-coding/k2p7
+                         ├── /swarm → server-side orchestrator
+                         │   └── 300 parallel sub-agents
+                         ├── /goal → structured multi-step work
+                         │   └── background sub-agents
+                         └── use explore/plan/coder → built-in sub-agents
+                             └── isolated contexts, auto-aggregation
 ```
 
-**Setup**:
+### 11.6 Mechanism A: Direct Z.ai API — What You Actually Get
+
+When Pi connects to `kimi-for-coding/k2p7` via the Z.ai direct API:
+
+- Kimi K2.7 base model (1T MoE, 32B active, 256K context)
+- Tool calling support (if configured)
+- Standard chat.completions behavior
+- **NO** automatic task decomposition
+- **NO** parallel sub-agent spawning
+- **NO** PARL-trained orchestration
+- **NO** `/swarm`, `/goal`, or sub-agent commands
+
+**When to use**: Standard coding tasks where Pi's own `pi-subagents` extension provides sufficient parallelism (max 4 agents).
+
+### 11.7 Mechanism B: Kimi Code CLI Subprocess — Full Swarm Access
+
+Pi spawns the `kimi` CLI as a subprocess. The CLI resolves `kimi-for-coding/k2p7` through the Z.ai platform **with Agent Swarm enabled**.
+
 ```bash
-# 1. Start Kimi server daemon
-kimi server run --port 8080
+# Kimi CLI configuration (~/.kimi-code/config.toml)
+[model]
+name = "kimi-for-coding/k2p7"
+provider = "zai"                    # Z.ai platform
+api_key = "${Z_AI_API_KEY}"
+api_base = "https://api.z.ai/v1"  # Z.ai endpoint
 
-# 2. Pi connects via ACP WebSocket
-# (requires Pi extension or custom RPC client)
+[goals]
+default_token_budget = 500000
+wall_clock_budget_minutes = 60
 ```
 
-**ACP is less mature for Pi integration** than CLI subprocess. Use only if you need:
-- Persistent Kimi server across multiple Pi sessions
-- Web UI visibility into swarm execution
-- Multi-editor coordination with Pi
-
-### 11.6 Decision Tree: Which Mechanism?
+### 11.8 Decision Tree: Which Mechanism for `kimi-for-coding/k2p7`?
 
 ```
-Does your task need Kimi Agent Swarm (300 parallel agents, 4.5x speedup)?
+Does the task need Kimi Agent Swarm (300 agents, 4.5x speedup)?
 │
-├── NO → Use Direct Model API (Mechanism A)
-│   pi --model moonshot:kimi-k2.6
+├── NO → Direct Z.ai API (Mechanism A)
+│   pi --model zai:kimi-for-coding/k2p7
 │   + pi-subagents for local parallelism (max 4)
-│   Simplest, most reliable, standard configuration
+│   Simpler, no CLI dependency
 │
-└── YES → Can you run the Kimi Code CLI?
+└── YES → Can you run Kimi Code CLI?
     │
-    ├── YES → Use CLI Subprocess (Mechanism B) — RECOMMENDED
-    │   pi --model kimi-cli:kimi-k2.6
-    │   Full swarm access, native /swarm /goal commands
-    │   Requires: kimi CLI installed, valid API key
+    ├── YES → CLI Subprocess (Mechanism B) — RECOMMENDED
+    │   pi --model kimi-cli
+    │   Kimi CLI resolves k2p7 via Z.ai WITH Agent Swarm
+    │   Full /swarm /goal access
     │
-    └── NO → Use Direct API + pi-subagents (limited)
-        pi --model moonshot:kimi-k2.6
-        + pi-subagents parallel (max 4 agents)
-        You lose: PARL orchestrator, 300 agents, 4.5x speedup
+    └── NO → Direct API + pi-subagents (limited)
+        pi --model zai:kimi-for-coding/k2p7
+        + pi-subagents parallel (max 4)
+        You lose: 300 agents, PARL orchestrator, 4.5x speedup
         You keep: Strong LLM, 256K context, low cost
 ```
 
-### 11.7 Architecture: Pi → Kimi CLI → Agent Swarm in Hermes
-
-```
-┌─────────────────────────────────────────────────────────────┐
-│                      Hermes Gateway                          │
-│         (Kanban boards, async delegation, memory)            │
-└──────────────────────┬──────────────────────────────────────┘
-                       │ RPC (JSONL)
-┌──────────────────────▼──────────────────────────────────────┐
-│              Pi Agent (single instance)                      │
-│              configured with kimi-cli:k2.6                   │
-│  ┌──────────────────────────────────────────────────────┐   │
-│  │        Kimi Code CLI Subprocess (kimi --rpc)          │   │
-│  │                                                      │   │
-│  │   Commands: /swarm, /goal, use explore, use plan     │   │
-│  │                                                      │   │
-│  │   ┌──────────────────────────────────────────────┐   │   │
-│  │   │     Moonshot Server-Side Orchestrator         │   │   │
-│  │   │     (PARL-trained, NOT in model weights)      │   │   │
-│  │   │                                                │   │   │
-│  │   │   ┌────────┐ ┌────────┐ ┌────────┐          │   │   │
-│  │   │   │coder   │ │explore │ │plan    │ ...×300  │   │   │
-│  │   │   │#1      │ │#1      │ │#1      │          │   │   │
-│  │   │   └────────┘ └────────┘ └────────┘          │   │   │
-│  │   │        Results aggregated                    │   │   │
-│  │   └──────────────────────────────────────────────┘   │   │
-│  │                                                      │   │
-│  └──────────────────────────────────────────────────────┘   │
-└─────────────────────────────────────────────────────────────┘
-```
-
-### 11.8 Kimi Code CLI Commands Available via Mechanism B/C
+### 11.9 Kimi Code CLI Commands Available via Mechanism B/C
 
 | Command | Agents | Best For | Since Version |
 |---------|--------|----------|---------------|
@@ -607,9 +659,9 @@ Does your task need Kimi Agent Swarm (300 parallel agents, 4.5x speedup)?
 | `use coder to...` | 1 (full tools) | Implementation tasks | >= 0.14.0 |
 | `/btw [<question>]` | N/A | Side chat for research | >= 0.23.0 |
 
-### 11.9 Permission and Cost Management (CLI Mode)
+### 11.10 Cost Management for Swarm Tasks
 
-**Goal token budgets**:
+**Goal token budgets** (Kimi Code CLI >= v0.23.0):
 ```toml
 # ~/.kimi-code/config.toml
 [goals]
@@ -617,7 +669,7 @@ default_token_budget = 500000   # 500K tokens per goal
 wall_clock_budget_minutes = 60   # 1 hour max per goal
 ```
 
-**Cost estimation for swarm tasks** (K2.6 via CLI):
+**Cost estimation** (`kimi-for-coding/k2p7` via CLI + Z.ai):
 
 | Swarm Size | Est. Tokens | Est. Cost | Best For |
 |------------|-------------|-----------|----------|
@@ -626,20 +678,18 @@ wall_clock_budget_minutes = 60   # 1 hour max per goal
 | 50-100 agents | 1-2M | $0.60-1.20 | Large-scale migration |
 | 100-300 agents | 3-8M | $1.80-4.80 | Full repository overhaul |
 
-**Background sub-agents** (v0.22.3+): Sub-agents can run while the main agent continues other work. Results auto-return upon completion. Critical fix in v0.23.1: `kimi -p` now waits for late/long sub-agents.
-
-### 11.10 Anti-Patterns Specific to Kimi Integration
+### 11.11 Anti-Patterns Specific to Kimi Integration
 
 | Anti-Pattern | Why It Fails | Correct Approach |
 |--------------|--------------|----------------|
-| Using Direct API (`api.moonshot.ai`) expecting Agent Swarm | API gives plain LLM only; no server-side orchestration | Use CLI Subprocess (Mechanism B) for swarm |
+| `kimi-for-coding/k2p7` via direct Z.ai API expecting Agent Swarm | API gives plain LLM only; no server-side orchestration | Route through Kimi Code CLI subprocess |
 | Using `pi-subagents` on top of Kimi CLI swarm | Redundant layers; pi-subagents max 4 vs Kimi's 300 | Let Kimi CLI handle all decomposition |
-| Kimi CLI without valid auth | Process starts but all API calls fail | Pre-configure `KIMI_API_KEY` in environment |
-| K2.6 thinking mode for CI/CD | Locked temperature + mandatory thinking = non-reproducible | Use K2.6 instant mode for CI/CD |
+| Kimi CLI without valid Z.ai auth | Process starts but all API calls fail | Pre-configure `Z_AI_API_KEY` in environment |
+| K2.7 thinking mode for CI/CD | Locked temperature + mandatory thinking = non-reproducible | Use K2.7 instant mode for CI/CD |
 | Manually decomposing tasks for Kimi | PARL orchestrator outperforms human decomposition | High-level goal description, let Kimi decompose |
 | Ignoring goal token budgets | Runaway consumption on large swarms | Set `default_token_budget` in config |
 
-### 11.11 Version Compatibility
+### 11.12 Version Compatibility
 
 | Kimi Code CLI | `/swarm` | `/goal` | Background Sub-agents | `kimi -p` Wait Fix |
 |---------------|----------|--------|----------------------|-------------------|
@@ -651,17 +701,17 @@ wall_clock_budget_minutes = 60   # 1 hour max per goal
 
 **Minimum recommended for production**: Kimi Code CLI >= 0.23.1.
 
-### 11.12 Alternative: pi-swarm Extension
+### 11.13 Alternative: pi-swarm Extension
 
-If Kimi CLI is unavailable, the `@gjczone/pi-swarm` Pi extension provides swarm-like behavior on top of Pi (inspired by Kimi Code):
+If Kimi CLI is unavailable, the `@gjczone/pi-swarm` Pi extension provides swarm-like behavior:
 
 ```bash
 pi ext install @gjczone/pi-swarm
 ```
 
-**Capabilities**: `Swarm` tool, 4 profiles (general/explore/plan/review), max concurrency 5, isolated git worktrees.
+**Capabilities**: `Swarm` tool, 4 profiles (general/explore/plan/review), max concurrency 5.
 
-**Limitations**: NOT Kimi's PARL-trained orchestrator; max 5 concurrent agents; application-level (not model-native). Use as fallback only.
+**Limitations**: NOT Kimi's PARL-trained orchestrator; max 5 agents; application-level. Use as fallback only.
 
 ---
 
