@@ -1,8 +1,8 @@
 # Optimal Pi Agent Configuration for Hermes Delegation
 
-> **Version**: 1.0.0  
+> **Version**: 1.1.0  
 > **Last Updated**: July 2026  
-> **Compatibility**: Hermes >= v0.8.0, Pi >= v0.5.0  
+> **Compatibility**: Hermes >= v0.8.0, Pi >= v0.5.0, Kimi Code CLI >= v0.23.0  
 
 A production-ready reference guide for embedding Pi Agent within Hermes-orchestrated delegation systems. Based on comprehensive research across 300+ verified sources including official documentation, GitHub repositories, academic papers, and production case studies.
 
@@ -22,6 +22,7 @@ A production-ready reference guide for embedding Pi Agent within Hermes-orchestr
 - [8. Monitoring and Metrics](#8-monitoring-and-metrics)
 - [9. Configuration Files](#9-configuration-files)
 - [10. Anti-Patterns](#10-anti-patterns)
+- [**11. CRITICAL: Kimi Model Delegation with Agent Swarm**](#11-critical-kimi-model-delegation-with-agent-swarm)
 - [References](#references)
 
 ---
@@ -203,7 +204,7 @@ You receive tasks via RPC and return structured results.
 - Read files before editing them
 - Run tests after any code change
 - Use git for all file operations
-- Report completion status via tool results
+- Report completion status via structured tool results
 - Escalate ambiguous requirements to supervisor
 
 ## Testing
@@ -212,7 +213,7 @@ You receive tasks via RPC and return structured results.
 - All changes must pass existing tests before reporting done
 
 ## Escalation
-Use `contact_supervisor` with reason:
+Use `contact_supervisor` with specific reason:
 - `need_decision` — ambiguous requirements
 - `interview_request` — need clarification
 - `progress_update` — long-running task status
@@ -410,10 +411,6 @@ See [`configs/pi-launch.sh`](configs/pi-launch.sh)
 
 See [`AGENTS.md`](AGENTS.md)
 
-### CI/CD Workflow
-
-See [`.github/workflows/ci-pi-delegation.yml`](.github/workflows/ci-pi-delegation.yml)
-
 ---
 
 ## 10. Anti-Patterns
@@ -431,14 +428,199 @@ See [`.github/workflows/ci-pi-delegation.yml`](.github/workflows/ci-pi-delegatio
 
 ---
 
+## 11. CRITICAL: Kimi Model Delegation with Agent Swarm
+
+> **This section is mandatory reading when Pi is configured to use any Kimi model (K2.5 or K2.6).** Kimi's native Agent Swarm capabilities fundamentally change how delegation should be handled. Using pi-subagents on top of Kimi's built-in subagent system creates redundant orchestration layers, wastes tokens, and prevents access to Kimi's most powerful features.
+
+### 11.1 The Golden Rule: Let Kimi Orchestrate Its Own Swarm
+
+When Pi's underlying model is Kimi, **do not use `pi-subagents` for task decomposition**. Instead, configure Pi to emit Kimi-native commands (`/swarm`, `/goal`, built-in subagent dispatches) and let Kimi's PARL-trained orchestrator handle the swarm.
+
+**Wrong**: Pi (pi-subagents) → decomposes task → delegates to 4 Pi subagents → each calls Kimi API separately
+
+**Right**: Pi (single instance) → emits `/swarm` or natural language prompt → Kimi's native orchestrator → spawns up to 300 sub-agents → results aggregated by Kimi
+
+```
+Hermes (orchestrator)
+  └── Pi (single instance, RPC mode, Kimi model)
+        └── Kimi Native Agent Swarm (PARL-trained)
+              ├── Sub-agent: coder (up to 300 parallel)
+              ├── Sub-agent: explore (read-only)
+              ├── Sub-agent: plan (architecture)
+              └── Results auto-aggregated to Pi
+```
+
+### 11.2 Kimi Agent Swarm Capabilities (K2.6 Latest)
+
+| Capability | K2.5 | K2.6 (Latest) |
+|------------|------|---------------|
+| **Max sub-agents** | 100 | **300** |
+| **Max tool calls per task** | 1,500 | **4,000** |
+| **Speedup vs single-agent** | ~3x | **4.5x** |
+| **Training method** | PARL | PARL (enhanced) |
+| **Critical steps reduction** | 2-3x | **3-4.5x** |
+| **Document-to-skill conversion** | No | **Yes** |
+
+Kimi's Agent Swarm uses **PARL (Parallel-Agent Reinforcement Learning)** — the orchestrator is trained to decompose tasks into parallelizable subtasks, spawn specialized agents, and synthesize results. This is model-native, not application-layer, meaning it has access to the model's full reasoning capacity for decomposition decisions.
+
+### 11.3 Built-in Sub-Agent Types
+
+Kimi Code CLI includes three built-in sub-agents that the main agent dispatches automatically:
+
+| Type | Purpose | Available Tools | When Dispatched |
+|------|---------|----------------|-----------------|
+| `coder` | General software engineering | Read, write, shell, search, grep | Default for implementation tasks |
+| `explore` | Read-only codebase exploration | Read, search, grep (no write) | Mapping unfamiliar codebases |
+| `plan` | Architecture and design | Read, search (no shell, no write) | Complex refactoring planning |
+
+These sub-agents are **scheduled automatically** by Kimi's main agent based on task complexity, context consumption, and sub-task independence. They run in isolated contexts — only the final result returns to the main agent, keeping the parent context lean.
+
+**Important**: Sub-agents cannot nest further sub-agents. The `Agent` tool is only available to the root agent. This prevents exponential token consumption.
+
+### 11.4 Pi Configuration for Kimi Delegation
+
+When Pi uses a Kimi model, add these instructions to AGENTS.md:
+
+```markdown
+## Kimi Agent Swarm Delegation Rules
+
+When the task meets ANY of these criteria, use Kimi's native multi-agent
+capabilities instead of handling everything in a single turn:
+
+1. **Codebase exploration** — use "explore to map out [area]" to trigger
+   the built-in explore sub-agent (read-only, fast, isolated context)
+
+2. **Multi-file refactoring** — describe the overall goal in natural
+   language; Kimi auto-dispatches coder sub-agents for parallel file edits
+
+3. **Research across multiple sources** — use `/swarm [task description]`
+   to activate swarm mode for parallel information gathering
+
+4. **Goal-oriented multi-step work** — use `/goal [objective]` to queue
+   structured multi-agent work with background execution
+
+### What NOT to do:
+- Do NOT decompose tasks manually into steps — Kimi's orchestrator
+  outperforms manual decomposition for parallel work
+- Do NOT request sub-agents for simple tasks (<5 files, single concern)
+- Do NOT use pi-subagents `delegate` commands when Kimi is the model
+
+### What TO do:
+- Write clear, high-level task descriptions — Kimi decomposes better
+  with abstract goals than step-by-step instructions
+- Include success criteria in the initial prompt
+- Use `/goal next [objective]` to queue follow-up work
+- Monitor `/goal manage` to track progress on long-running goals
+```
+
+### 11.5 Key Kimi Commands for Delegation
+
+| Command | Purpose | Token Budget | Best For |
+|---------|---------|-------------|----------|
+| `/swarm <task>` | Multi-agent parallel execution | Task-defined | Research, multi-file exploration |
+| `/goal <objective>` | Goal-oriented structured work | Configurable | Complex multi-step projects |
+| `/goal next <obj>` | Queue follow-up goal | Inherited | Sequential goal pipelines |
+| `/goal manage` | Interactive goal queue | N/A | Reordering and monitoring |
+| `use explore to...` | Read-only sub-agent dispatch | Explore budget | Codebase mapping |
+| `use plan to...` | Planning sub-agent dispatch | Plan budget | Architecture decisions |
+
+### 11.6 Permission and Cost Management
+
+**Goal token budgets** (Kimi Code CLI >= v0.23.0):
+
+```toml
+# ~/.kimi-code/config.toml
+[goals]
+default_token_budget = 500000  # 500K tokens per goal
+wall_clock_budget_minutes = 60  # 1 hour max per goal
+```
+
+**Permission inheritance**: Sub-agents inherit the main agent's permission rules. "Always allow" rules propagate automatically — no re-approval needed for the same tool types.
+
+**Cost estimation for swarm tasks**:
+
+| Swarm Size | Est. Tokens | Est. Cost (K2.6) | Best For |
+|------------|-------------|-----------------|----------|
+| 3-5 agents | 50-100K | $0.03-0.06 | Multi-file refactoring |
+| 10-20 agents | 200-500K | $0.12-0.30 | Codebase-wide analysis |
+| 50-100 agents | 1-2M | $0.60-1.20 | Large-scale migration |
+| 100-300 agents | 3-8M | $1.80-4.80 | Full repository overhaul |
+
+### 11.7 Background Sub-Agents and Async Execution
+
+Kimi Code CLI >= v0.22.3 supports **background sub-agents** that continue executing while the main agent works on other tasks:
+
+```python
+# Pi receives task from Hermes
+# Pi emits prompt to Kimi with background-capable task
+
+# Kimi spawns background sub-agents
+# Results auto-returned to main agent upon completion
+# No manual polling needed
+```
+
+**Critical for Hermes integration**: When using `kimi -p` (print mode), Kimi now waits for background sub-agents to finish before exiting (fixed in v0.23.1). This ensures Hermes receives complete results even with parallel sub-agent execution.
+
+### 11.8 Architecture: Pi + Kimi Agent Swarm in Hermes
+
+```
+┌─────────────────────────────────────────────────────────────┐
+│                      Hermes Gateway                          │
+│         (Kanban boards, async delegation, memory)            │
+└──────────────────────┬──────────────────────────────────────┘
+                       │ RPC (JSONL)
+┌──────────────────────▼──────────────────────────────────────┐
+│              Pi Agent (single instance, Kimi model)          │
+│  ┌──────────────────────────────────────────────────────┐   │
+│  │  Kimi K2.6 Native Agent Swarm (PARL-orchestrated)    │   │
+│  │                                                      │   │
+│  │   ┌────────┐  ┌────────┐  ┌────────┐  ┌────────┐   │   │
+│  │   │coder   │  │coder   │  │explore │  │plan    │   │   │
+│  │   │#1      │  │#2      │  │#1      │  │#1      │   │   │
+│  │   └────────┘  └────────┘  └────────┘  └────────┘   │   │
+│  │        ... up to 300 parallel sub-agents ...         │   │
+│  │                                                      │   │
+│  │   Results aggregated → returned to Pi → Hermes       │   │
+│  └──────────────────────────────────────────────────────┘   │
+└─────────────────────────────────────────────────────────────┘
+```
+
+### 11.9 Anti-Patterns Specific to Kimi Delegation
+
+| Anti-Pattern | Why It Fails | Correct Approach |
+|--------------|--------------|----------------|
+| Using `pi-subagents` with Kimi model | Redundant orchestration layer; blocks Kimi's PARL-trained decomposer | Single Pi instance; let Kimi handle swarm |
+| Manual step-by-step decomposition | Kimi's orchestrator outperforms human decomposition for parallel work | High-level goal description |
+| Not using `/swarm` for parallel research | Misses 4.5x speedup from native parallelization | `/swarm` for all parallel research tasks |
+| Ignoring goal token budgets | Runaway token consumption on large swarms | Set `default_token_budget` in config |
+| Nesting sub-agents (attempting recursive delegation) | Kimi explicitly blocks this; wastes tokens if attempted | Flat delegation only; main agent coordinates |
+| Using K2.6 thinking mode for CI/CD | Locked temperature + mandatory thinking = non-reproducible outputs | K2.6 instant mode for CI/CD; thinking for exploration |
+
+### 11.10 Version Compatibility
+
+| Kimi Code CLI | Agent Swarm | `/swarm` Command | `/goal` Command | Background Sub-agents |
+|---------------|-------------|------------------|-----------------|----------------------|
+| >= 0.23.1 | Full | Stable | Stable | Full (fix for late/long sub-agents) |
+| >= 0.23.0 | Full | Stable | Stable | Full |
+| >= 0.22.3 | Full | Stable | Stable | Partial (kimi -p wait fix) |
+| >= 0.14.0 | Beta | Stable | Experimental | No |
+| < 0.14.0 | Not available | N/A | N/A | N/A |
+
+**Minimum recommended**: Kimi Code CLI >= 0.23.1 for production Hermes integration.
+
+---
+
 ## References
 
 - [Pi Agent Documentation](https://pi.dev/docs)
 - [Hermes Framework Documentation](https://hermes-agent.nousresearch.com/docs/)
+- [Kimi Code CLI Documentation](https://www.kimi.com/code/docs/en/kimi-code/)
+- [Kimi Code CLI Changelog](https://moonshotai.github.io/kimi-code/en/release-notes/changelog.html)
+- [Kimi Agents and Sub-Agents](https://www.kimi.com/code/docs/en/kimi-code/customization/agents.html)
+- [K2.6 Agent Swarm Beta — Kimi Help Center](https://www.kimi.com/help/agent/agent-swarm)
 - [Hermes Async Delegation PR #5586](https://github.com/NousResearch/hermes-agent/pull/5586)
 - [Pi Container Sandbox Extension](https://github.com/pi-dev/pi-container-sandbox)
 - [Pi Subagents Extension](https://github.com/pi-dev/pi-subagents)
-- [OpenClaw Architecture](https://docs.openclaw.com/architecture)
 - [Google/MIT Multi-Agent Scaling Research](https://arxiv.org/abs/2512.08296)
 
 ---
@@ -447,4 +629,4 @@ See [`.github/workflows/ci-pi-delegation.yml`](.github/workflows/ci-pi-delegatio
 
 MIT License - See [LICENSE](LICENSE) for details.
 
-> **Disclaimer**: This guide reflects best practices as of July 2026. Both Hermes and Pi are rapidly evolving projects. Always verify configuration against current documentation.
+> **Disclaimer**: This guide reflects best practices as of July 2026. All referenced tools are rapidly evolving. Always verify configuration against current vendor documentation.
