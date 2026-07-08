@@ -3,75 +3,161 @@
 # =============================================================================
 # Place this file at: ~/.hermes/config.yaml
 # =============================================================================
+# Model stack aligned with opencode-config:
+#   github.com/niq-cnr/opencode-config
+# =============================================================================
 
+# ---------------------------------------------------------------------------
+# Core Agent Settings
+# ---------------------------------------------------------------------------
 agent:
   name: "hermes-pi-orchestrator"
-  model: "claude:claude-sonnet-4.5"
+  # Default orchestration model: GLM-5.2 for planning and reasoning
+  model: "zai-coding-plan/glm-5.2"
+  
+  # Delegation limits — cap at 3-4 agents per Google/MIT 45% threshold research
   max_concurrent_children: 3
   max_spawn_depth: 2
+  
+  # Async delegation (requires Hermes >= v0.8.0, June 2026)
   delegation_mode: async
+  
+  # Context management
   max_turns_per_session: 50
   context_compression_threshold: 0.8
 
+# ---------------------------------------------------------------------------
+# Z.ai Platform Configuration
+# ---------------------------------------------------------------------------
+zai_platform:
+  api_key: "${Z_AI_API_KEY}"           # Environment variable
+  api_base: "https://api.z.ai/v1"      # Z.ai endpoint
+  
+# ---------------------------------------------------------------------------
+# Pi Agent Integration
+# ---------------------------------------------------------------------------
 pi_agent:
+  # RPC mode is the only supported transport for Hermes integration
   transport: rpc
-  default_model: "claude:claude-sonnet-4.5"
+  
+  # Default model: GLM-5.2 for orchestration (aligned with opencode-config)
+  default_model: "zai-coding-plan/glm-5.2"
+  
+  # Container sandbox configuration
   sandbox:
     enabled: true
     type: docker
     workspace_mount: "${PWD}:/workspace"
     resources: medium
+    
+  # Extensions to auto-load
   extensions:
     - pi-container-sandbox
     - pi-subagents
+    
+  # Session persistence
   session_dir: "~/.hermes/pi-sessions"
+  
+  # Model routing: aligned with opencode-config reference
+  # GLM-5.2: orchestration, planning, validation (reasoning-heavy)
+  # Kimi K2.7: implementation, evaluation (coding, Agent Swarm via CLI)
+  # GLM-5-Turbo: lightweight tasks (fast, cheap)
   model_routing:
-    simple_edits: "ollama:codellama:13b"
-    standard_coding: "openai:gpt-4.1-mini"
-    complex_architecture: "claude:claude-sonnet-4.5"
-    review_validation: "openai:gpt-4.1"
-
+    orchestration: "zai-coding-plan/glm-5.2"
+    planning: "zai-coding-plan/glm-5.2"
+    implementation: "kimi-for-coding/k2p7"     # Requires Kimi CLI for Agent Swarm
+    evaluation: "kimi-for-coding/k2p7"          # Requires Kimi CLI for Agent Swarm
+    validation: "zai-coding-plan/glm-5.2"
+    lightweight: "zai-coding-plan/glm-5-turbo"
+    review: "kimi-for-coding/k2p7"              # Different model from author
+  
+  # Kimi Code CLI routing (for Agent Swarm access)
+  # When model is kimi-for-coding/k2p7, Pi MUST route through Kimi CLI
+  # subprocess instead of direct Z.ai API. The CLI resolves the model
+  # identifier through Z.ai WITH server-side Agent Swarm orchestration.
+  kimi_cli:
+    enabled: true                              # Enable CLI subprocess routing
+    cli_path: "$(which kimi)"                  # Path to Kimi Code CLI binary
+    fallback_to_api: true                      # Fallback to direct API if CLI unavailable
+    swarm_commands:
+      - /swarm
+      - /goal
+      - /goal next
+      - /goal manage
+      - /btw
+    subagent_commands:
+      - "use explore"
+      - "use plan"
+      - "use coder"
+    
+# ---------------------------------------------------------------------------
+# Kanban Board (for durable cross-session work)
+# ---------------------------------------------------------------------------
 kanban:
   enabled: true
-  heartbeat_interval: 300
-  stale_timeout: 14400
-  claim_ttl: 900
+  heartbeat_interval: 300        # 5 minutes
+  stale_timeout: 14400           # 4 hours
+  claim_ttl: 900                 # 15 minutes
   auto_retry: true
   max_retries: 3
-
+  
+# ---------------------------------------------------------------------------
+# Memory Configuration
+# ---------------------------------------------------------------------------
 memory:
   prompt_memory:
     memory_file: "~/.hermes/MEMORY.md"
     user_file: "~/.hermes/USER.md"
     max_chars: 2200
+    
   session_archive:
     backend: sqlite
     fts5_enabled: true
+    
   skills:
     auto_generate: true
-    trigger_threshold: 5
+    trigger_threshold: 5          # Auto-generate after 5+ tool calls
     curator_enabled: true
-    curator_cycle: 7
+    curator_cycle: 7              # 7-day evaluation cycle
+    
   external_providers: []
 
+# ---------------------------------------------------------------------------
+# MCP (Model Context Protocol)
+# ---------------------------------------------------------------------------
+# Pi does not use MCP (per-use token model preferred)
+# Configure MCP only for other tools that require it
 mcp:
   servers: []
-
+  
+# ---------------------------------------------------------------------------
+# Logging and Observability
+# ---------------------------------------------------------------------------
 logging:
   level: info
   format: json
   output: "~/.hermes/logs/hermes.log"
-
+  
 metrics:
   enabled: true
   export_interval: 60
-
+  
+# ---------------------------------------------------------------------------
+# Security
+# ---------------------------------------------------------------------------
 security:
+  # Terminal backend — Docker required for Pi sandboxing
   terminal_backend: docker
+  
+  # Dangerous command handling
   dangerous_commands:
     require_approval: true
-    allowed_in_containers: false
+    allowed_in_containers: false  # Container is the security boundary
+    
+  # Profile isolation
   profile_isolation: true
+  
+  # Skill security scanning
   skill_scanning:
     enabled: true
     trust_levels:
